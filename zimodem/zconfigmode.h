@@ -1,5 +1,5 @@
 /*
-   Copyright 2016-2019 Bo Zimmerman
+   Copyright 2016-2024 Bo Zimmerman
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -32,7 +32,8 @@ class ZConfig : public ZMode
       ZCFGMENU_NEWHOST=10,
       ZCFGMENU_NOTES=11,
       ZCFGMENU_NETMENU=12,
-      ZCFGMENU_SUBNET=13
+      ZCFGMENU_SUBNET=13,
+      ZCFGMENU_NEWPRINT=14
     } currState;
     
     ZSerial serial; // storage for serial settings only

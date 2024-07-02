@@ -1,5 +1,5 @@
 /*
-   Copyright 2018-2019 Bo Zimmerman
+   Copyright 2018-2024 Bo Zimmerman
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -15,6 +15,10 @@
 */
 #include <FS.h>
 
+typedef int (*RecvChar)(ZSerial *ser, int);
+typedef void (*SendChar)(ZSerial *ser, char);
+typedef bool (*DataHandler)(File *xfile, unsigned long, char*, int);
+
 class XModem 
 {
   typedef enum
@@ -24,6 +28,7 @@ class XModem
   } transfer_t;
   
   private:
+    size_t fileSizeLimit = 10000000;
     //holds readed byte (due to dataAvail())
     int byte;
     //expected block number
@@ -33,60 +38,75 @@ class XModem
     //retry counter for NACK
     int retries;
     //buffer
-    char buffer[128];
+    char buffer[1024];
     //repeated block flag
     bool repeatedBlock;
 
-    int  (*recvChar)(int);
-    void (*sendChar)(char);
-    bool (*dataHandler)(unsigned long number, char *buffer, int len);
+    ZSerial xserial;
+
+    int  (*recvChar)(ZSerial *ser, int);
+    void (*sendChar)(ZSerial *ser, char);
+    bool (*dataHandler)(File *xfile, unsigned long number, char *buffer, int len);
     unsigned short crc16_ccitt(char *buf, int size);
-    bool dataAvail(int delay);
-    int dataRead(int delay);
-    void dataWrite(char symbol);
+    bool serialAvail(int delay);
+    int serialRead(int delay);
+    void serialWrite(char symbol);
     bool receiveFrameNo(void);
-    bool receiveData(void);
-    bool checkCrc(void);
+    bool receiveData(int blkSize);
+    bool checkCrc(int blkSize);
     bool checkChkSum(void);
     bool receiveFrames(transfer_t transfer);
     bool sendNack(void);
     void init(void);
     
+    bool transmitFrame(transfer_t transfer, int blkSize);
     bool transmitFrames(transfer_t);
     unsigned char generateChkSum(void);
+
+  protected:
+    FS *fileSystem = null;
+    File yfile;
+    File *xfile = null;
+    File *dfile = null;
+    int blockSize = 128;
+    bool send0block = false;
     
   public:
     static const unsigned char XMO_NACK = 21;
     static const unsigned char XMO_ACK =  6;
+    static const unsigned char XMO_CRC = 'C';
 
     static const unsigned char XMO_SOH =  1;
+    static const unsigned char XMO_STX =  2;
     static const unsigned char XMO_EOT =  4;
     static const unsigned char XMO_CAN =  0x18;
 
-    static const int receiveDelay=7000;
+    static const int receiveFrameDelay=7000;
+    static const int receiveByteDelay=3000;
     static const int rcvRetryLimit = 10;
 
-  
-    XModem(int (*recvChar)(int), void (*sendChar)(char));
-    XModem(int (*recvChar)(int), void (*sendChar)(char), 
-                bool (*dataHandler)(unsigned long, char*, int));
+    size_t fileSize = 0;
+
+    XModem(File &f, FlowControlType commandFlow, RecvChar recvChar, SendChar sendChar, DataHandler dataHandler);
     bool receive();
     bool transmit();
 };
 
-static File *xfile = null;
-static ZSerial xserial;
+class YModem : public XModem
+{
+  public:
+    YModem(FS *fileSystem, File &f, FlowControlType commandFlow, RecvChar recvChar, SendChar sendChar, DataHandler dataHandler);
+};
 
-static int xReceiveSerial(int del)
+static int xReceiveSerial(ZSerial *ser, int del)
 {
   unsigned long end=micros() + (del * 1000L);
   while(micros() < end)
   {
     serialOutDeque();
-    if(xserial.available() > 0)
+    if(ser->available() > 0)
     {
-      int c=xserial.read();
-      logSerialIn(c);
+      int c=ser->read();
       return c;
     }
     yield();
@@ -94,20 +114,20 @@ static int xReceiveSerial(int del)
   return -1;
 }
 
-static void xSendSerial(char c)
+static void xSendSerial(ZSerial *ser, char c)
 {
-  xserial.write((uint8_t)c);
-  xserial.flush();
+  ser->write((uint8_t)c);
+  ser->flush();
 }
 
-static bool xUDataHandler(unsigned long number, char *buf, int sz)
+static bool xUDataHandler(File *xfile, unsigned long number, char *buf, int sz)
 {
   for(int i=0;i<sz;i++)
     xfile->write((uint8_t)buf[i]);
   return true;
 }
 
-static bool xDDataHandler(unsigned long number, char *buf, int sz)
+static bool xDDataHandler(File *xfile, unsigned long number, char *buf, int sz)
 {
   for(int i=0;i<sz;i++)
   {
@@ -124,32 +144,31 @@ static bool xDDataHandler(unsigned long number, char *buf, int sz)
   return true;  
 }
 
-static boolean xDownload(File &f, String &errors)
+static bool xDownload(FlowControlType commandFlow, File &f, String &errors)
 {
-  xfile = &f;
-  XModem xmo(xReceiveSerial, xSendSerial, xDDataHandler);
+  XModem xmo(f, commandFlow, xReceiveSerial, xSendSerial, xDDataHandler);
   bool result = xmo.transmit();
-  xfile = null;
-  xserial.flushAlways();
   return result;
 }
 
-static boolean xUpload(File &f, String &errors)
+static bool xUpload(FlowControlType commandFlow, File &f, String &errors)
 {
-  xfile = &f;
-  XModem xmo(xReceiveSerial, xSendSerial, xUDataHandler);
+  XModem xmo(f, commandFlow, xReceiveSerial, xSendSerial, xUDataHandler);
   bool result = xmo.receive();
-  xfile = null;
-  xserial.flushAlways();
   return result;
 }
 
-static void initXSerial(FlowControlType commandFlow)
+static bool yDownload(FS *fileSystem, FlowControlType commandFlow, File &f, String &errors)
 {
-  xserial.setFlowControlType(FCT_DISABLED);
-  if(commandFlow==FCT_RTSCTS)
-    xserial.setFlowControlType(FCT_RTSCTS);
-  xserial.setPetsciiMode(false);
-  xserial.setXON(true);
+  YModem ymo(fileSystem, f, commandFlow, xReceiveSerial, xSendSerial, xDDataHandler);
+  ymo.fileSize = f.size();  // multi-upload will need this
+  bool result = ymo.transmit();
+  return result;
 }
 
+static bool yUpload(FS *fileSystem, FlowControlType commandFlow, File &dirF, String &errors)
+{
+  YModem ymo(fileSystem, dirF, commandFlow, xReceiveSerial, xSendSerial, xUDataHandler);
+  bool result = ymo.receive();
+  return result;
+}

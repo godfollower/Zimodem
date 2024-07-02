@@ -1,5 +1,5 @@
 /*
-   Copyright 2016-2019 Bo Zimmerman
+   Copyright 2016-2024 Bo Zimmerman
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -25,8 +25,8 @@ enum LogOutputState
 
 static unsigned long expectedSerialTime = 1000;
 
-static boolean logFileOpen = false;
-static bool logFileDebug= false;
+static bool logFileOpen = false;
+static bool logFile2Uart= false;
 static File logFile; 
 
 static void logSerialOut(const uint8_t c);
@@ -37,6 +37,7 @@ static void logPrint(const char* msg);
 static void logPrintln(const char* msg);
 static void logPrintf(const char* format, ...);
 static void logPrintfln(const char* format, ...);
+static void logFileLoop();
 static char *TOHEX(const char *s, char *hex, const size_t len);
 static char *TOHEX(long a);
 static char *TOHEX(int a);

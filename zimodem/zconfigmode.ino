@@ -1,5 +1,5 @@
 /*
-   Copyright 2016-2019 Bo Zimmerman
+   Copyright 2016-2024 Bo Zimmerman
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 void ZConfig::switchTo()
 {
+  debugPrintf("\r\nMode:Config\r\n");
   currMode=&configMode;
   serial.setFlowControlType(commandMode.serial.getFlowControlType());
   serial.setPetsciiMode(commandMode.serial.isPetsciiMode());
@@ -23,7 +24,7 @@ void ZConfig::switchTo()
   newListen=commandMode.preserveListeners;
   commandMode.doEcho=true;
   serverSpec.port=6502;
-  serverSpec.flagsBitmap=commandMode.getConfigFlagBitmap();
+  serverSpec.flagsBitmap=commandMode.getConfigFlagBitmap() & (~FLAG_ECHO);
   if(servs)
     serverSpec = *servs;
   serial.setXON(true);
@@ -50,6 +51,7 @@ void ZConfig::serialIncoming()
 
 void ZConfig::switchBackToCommandMode()
 {
+  debugPrintf("\r\nMode:Command\r\n");
   commandMode.doEcho=savedEcho;
   currMode = &commandMode;
 }
@@ -58,11 +60,15 @@ void ZConfig::doModeCommand()
 {
   String cmd = commandMode.getNextSerialCommand();
   char c='?';
+  char sc='?';
   for(int i=0;i<cmd.length();i++)
   {
     if(cmd[i]>32)
     {
       c=lc(cmd[i]);
+      if((i<cmd.length()-1)
+      &&(cmd[i+1]>32))
+        sc=lc(cmd[i+1]);
       break;
     }
   }
@@ -109,11 +115,17 @@ void ZConfig::doModeCommand()
         showMenu=true;
       }
       else
-      if(c=='p') // petscii translation toggle
+      if((c=='p')&&(sc=='e')) // petscii translation toggle
       {
         commandMode.serial.setPetsciiMode(!commandMode.serial.isPetsciiMode());
         serial.setPetsciiMode(commandMode.serial.isPetsciiMode());
         settingsChanged=true;
+        showMenu=true;
+      }
+      else
+      if((c=='p')&&(sc=='r')) // print spec
+      {
+        currState=ZCFGMENU_NEWPRINT;
         showMenu=true;
       }
       else
@@ -194,7 +206,6 @@ void ZConfig::doModeCommand()
             if(s->flagsBitmap != serverSpec.flagsBitmap)
             {
               s->flagsBitmap = serverSpec.flagsBitmap;
-              WiFiServerNode::SaveWiFiServers();
             }
           }
           else
@@ -202,16 +213,21 @@ void ZConfig::doModeCommand()
             WiFiServerNode::DestroyAllServers();
             s = new WiFiServerNode(serverSpec.port,serverSpec.flagsBitmap);
             WiFiServerNode::SaveWiFiServers();
+            commandMode.updateAutoAnswer();
           }
         }
-        commandMode.reSaveConfig();
-        serial.printf("%sSettings saved.%s",EOLNC,EOLNC);
+        if(!commandMode.reSaveConfig(3))
+          serial.printf("%sFailed to save Settings.%s",EOLNC,EOLNC);
+        else
+          serial.printf("%sSettings saved.%s",EOLNC,EOLNC);
         commandMode.showInitMessage();
+        WiFiServerNode::SaveWiFiServers();
         switchBackToCommandMode();
         return;
       }
       else
         showMenu=true;
+      break;
     }
     case ZCFGMENU_NUM:
     {
@@ -232,7 +248,9 @@ void ZConfig::doModeCommand()
       {
         lastNumber = atol((char *)cmd.c_str());
         lastAddress = "";
-        ConnSettings flags(commandMode.getConfigFlagBitmap());
+        int flagsBitmap = commandMode.getConfigFlagBitmap();
+        flagsBitmap = flagsBitmap & (~FLAG_ECHO);
+        ConnSettings flags(flagsBitmap);
         lastOptions = flags.getFlagString();
         lastNotes = "";
         currState=ZCFGMENU_ADDRESS;
@@ -265,24 +283,20 @@ void ZConfig::doModeCommand()
           currState=ZCFGMENU_NOTES; // just keep old values
       else
       {
-        boolean fail = cmd.indexOf(',') >= 0;
-        int colonDex=cmd.indexOf(':');
-        fail = fail || (colonDex <= 0) || (colonDex == cmd.length()-1);
-        fail = fail || (colonDex != cmd.lastIndexOf(':'));
-        if(!fail)
-        {
-          for(int i=colonDex+1;i<cmd.length();i++)
-            if(strchr("0123456789",cmd[i])<0)
-              fail=true;
-        }
-        if(fail)
-        {
-          serial.printf("%sInvalid address format (hostname:port) for '%s'.%s%s",EOLNC,cmd.c_str(),EOLNC,EOLNC);
-        }
+        if(!validateHostInfo((uint8_t *)cmd.c_str()))
+          serial.printf("%sInvalid address format (hostname:port) or (user:pass@hostname:port) for '%s'.%s%s",EOLNC,cmd.c_str(),EOLNC,EOLNC);
         else
         {
           lastAddress = cmd;
           currState=ZCFGMENU_NOTES;
+          if(lastAddress.indexOf("@")>0)
+          {
+            int x = lastOptions.indexOf("S"); 
+            if(x<0)
+              lastOptions += "S";
+            else
+              lastOptions = lastOptions.substring(0,x) + lastOptions.substring(x+1);
+          }
         }
       }
       showMenu=true; // re-show the menu
@@ -565,6 +579,24 @@ void ZConfig::doModeCommand()
         showMenu=true;
       }
       break;
+    case ZCFGMENU_NEWPRINT:
+      if(cmd.length()>0)
+      {
+        if(!printMode.testPrinterSpec(cmd.c_str(),cmd.length(),commandMode.serial.isPetsciiMode()))
+        {
+          serial.printf("%sBad format. Try ?:<host>:<port>/<path>.%s",EOLNC,EOLNC);
+          serial.printf("? = A)scii P)etscii or R)aw.%s",EOLNC);
+          serial.printf("Example: R:192.168.1.71:631/ipp/printer%s",EOLNC);
+        }
+        else
+        {
+          printMode.setLastPrinterSpec(cmd.c_str());
+          settingsChanged=true;
+        }
+      }
+      currState=ZCFGMENU_MAIN;
+      showMenu=true;
+      break;
     case ZCFGMENU_WIFIPW:
       if(cmd.length()==0)
       {
@@ -665,6 +697,7 @@ void ZConfig::loop()
         serial.printf("[FLOW] control: %s%s",flowName.c_str(),EOLNC);
         serial.printf("[ECHO] keystrokes: %s%s",savedEcho?"ON":"OFF",EOLNC);
         serial.printf("[BBS] host: %s%s",bbsMode.c_str(),EOLNC);
+        serial.printf("[PRINT] spec: %s%s",printMode.getLastPrinterSpec(),EOLNC);
         serial.printf("[PETSCII] translation: %s%s",commandMode.serial.isPetsciiMode()?"ON":"OFF",EOLNC);
         serial.printf("[ADD] new phonebook entry%s",EOLNC);
         PhoneBookEntry *p = phonebook;
@@ -693,9 +726,9 @@ void ZConfig::loop()
       {
         PhoneBookEntry *lastEntry = PhoneBookEntry::findPhonebookEntry(lastNumber);
         if(lastEntry == null)
-          serial.printf("%sEnter a new hostname:port%s: ",EOLNC,EOLNC);
+          serial.printf("%sEnter hostname:port, or user:pass@hostname:port for SSH%s: ",EOLNC,EOLNC);
         else
-          serial.printf("%sModify hostname:port, or enter DELETE (%s)%s: ",EOLNC,lastAddress.c_str(),EOLNC);
+          serial.printf("%sModify address, or enter DELETE (%s)%s: ",EOLNC,lastAddress.c_str(),EOLNC);
         break;
       }
       case ZCFGMENU_OPTIONS:
@@ -706,6 +739,7 @@ void ZConfig::loop()
         serial.printf("[TELNET] Translation: %s%s",flags.telnet?"ON":"OFF",EOLNC);
         serial.printf("[ECHO]: %s%s",flags.echo?"ON":"OFF",EOLNC);
         serial.printf("[FLOW] Control: %s%s",flags.xonxoff?"XON/XOFF":flags.rtscts?"RTS/CTS":"DISABLED",EOLNC);
+        serial.printf("[SSH/SSL] Security: %s%s",flags.secure?"ON":"OFF",EOLNC);
         serial.printf("%sEnter option to toggle or ENTER to exit%s: ",EOLNC,EOLNC);
         break;
       }
@@ -812,6 +846,11 @@ void ZConfig::loop()
         serial.printf("%sEnter a new hostname: ",EOLNC);
         break;
       }
+      case ZCFGMENU_NEWPRINT:
+      {
+        serial.printf("%sEnter ipp printer spec (?:<host>:<port>/path)%s: ",EOLNC,EOLNC);
+        break;
+      }
       case ZCFGMENU_WIFIPW:
       {
         serial.printf("%sEnter your WiFi Password: ",EOLNC);
@@ -824,7 +863,7 @@ void ZConfig::loop()
       }
       case ZCFGMENU_WICONFIRM:
       {
-        serial.printf("%sYour setting changed.  Save them (y/N)?",EOLNC);
+        serial.printf("%sYour settings changed. Save (y/N)?",EOLNC);
         break;
       }
     }
@@ -838,5 +877,6 @@ void ZConfig::loop()
   {
     serialOutDeque();
   }
+  logFileLoop();
 }
 

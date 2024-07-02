@@ -1,11 +1,8 @@
 !--------------------------------------------------
-!- Tuesday, July 18, 2017 2:54:26 AM
-!- Import of : 
-!- c:\src\zimodem\cbm8bit\src\irc64-128.prg
-!- Commodore 64
+!- 2/2024
 !--------------------------------------------------
 1 REM IRC64/128  1200B 1.8+
-2 REM UPDATED 08/19/2017 02:58A
+2 REM UPDATED 10/13/2021 02:58A
 10 POKE254,PEEK(186):IFPEEK(254)<8THENPOKE254,8
 12 SY=PEEK(65532):IFSY=61THENPOKE58,254:CLR
 13 IFSY=34THENX=23777:POKEX,170:IFPEEK(X)<>170THENPRINT"<16k":STOP
@@ -24,7 +21,7 @@
 90 IFSY<>34THENPOKE56579,0:REM WHY DOES THIS WORK
 100 REM GET THE BAUD RATE
 110 P$="a"
-120 PRINTCO$;"{clear}{down*2}IRC CHAT v1.5":PRINT"Requires C64Net WiFi firmware 1.8+"
+120 PRINTCO$;"{clear}{down*2}IRC CHAT v1.5":PRINT"Requires Zimodem firmware 1.8+"
 140 PRINT"By Bo Zimmerman (bo@zimmers.net)":PRINT:PRINT
 197 REM --------------------------------
 198 REM GET STARTED                    !
@@ -33,10 +30,12 @@
 201 PH=0:PT=0:MV=ML+18
 202 PRINT "Initializing modem..."
 203 GET#5,A$:IFA$<>""THEN203
-205 PRINT#5,CR$;"athz0f0e0";CR$;:GOSUB900:IFP$<>"ok"THEN203
+205 PRINT#5,CR$;"athz0&p0f4e0";CR$;:GOSUB900:IFP$<>"ok"THEN203
 208 GET#5,A$:IFA$<>""THEN208
 210 PRINT#5,CR$;"ate0n0r0v1q0";CR$;
 220 GOSUB900:IFP$<>"ok"THEN208
+225 FORI=1TO100:NEXT
+228 GET#5,A$:IFA$>""THEN228
 230 PRINT#5,"ate0v1x1f3q0s40=250i4";CR$;CHR$(19);
 235 GOSUB900:VR=VAL(P$):IFVR<1.8THENPRINT"Zimodem init failed: ";P$:STOP
 240 GOSUB900:IFP$<>"ok"THEN203

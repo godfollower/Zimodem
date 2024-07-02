@@ -1,5 +1,5 @@
 /*
-   Copyright 2016-2019 Bo Zimmerman
+   Copyright 2016-2024 Bo Zimmerman
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -75,6 +75,20 @@ String ConnSettings::getFlagString()
   lastOptions += (rtscts?"r":"");
   lastOptions += (secure?"s":"");
   return lastOptions;
+}
+
+void ConnSettings::setFlag(ConnFlag flagMask, bool newVal)
+{
+  switch(flagMask)
+  {
+    case FLAG_DISCONNECT_ON_EXIT: break;
+    case FLAG_PETSCII: petscii = newVal; break;
+    case FLAG_TELNET: telnet = newVal; break;
+    case FLAG_ECHO: echo = newVal; break;
+    case FLAG_XONXOFF: xonxoff = newVal; break;
+    case FLAG_SECURE: secure = newVal; break;
+    case FLAG_RTSCTS: rtscts = newVal; break;
+  }
 }
 
 void ConnSettings::IPtoStr(IPAddress *ip, String &str)

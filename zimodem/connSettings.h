@@ -1,5 +1,5 @@
 /*
-   Copyright 2016-2019 Bo Zimmerman
+   Copyright 2016-2024 Bo Zimmerman
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -27,18 +27,19 @@ enum ConnFlag
 class ConnSettings
 {
   public:
-    boolean petscii = false;
-    boolean telnet = false;
-    boolean echo = false;
-    boolean xonxoff = false;
-    boolean rtscts = false;
-    boolean secure = false;
+    bool petscii = false;
+    bool telnet = false;
+    bool echo = false;
+    bool xonxoff = false;
+    bool rtscts = false;
+    bool secure = false;
 
     ConnSettings(int flagBitmap);
     ConnSettings(const char *dmodifiers);
     ConnSettings(String modifiers);
     int getBitmap();
     int getBitmap(FlowControlType forceCheck);
+    void setFlag(ConnFlag flagMask, bool newVal);
     String getFlagString();
 
     static void IPtoStr(IPAddress *ip, String &str);

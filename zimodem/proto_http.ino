@@ -1,5 +1,5 @@
 /*
-   Copyright 2016-2019 Bo Zimmerman
+   Copyright 2016-2024 Bo Zimmerman
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -18,6 +18,15 @@ bool parseWebUrl(uint8_t *vbuf, char **hostIp, char **req, int *port, bool *doSS
   *doSSL = false;
   if(strstr((char *)vbuf,"http:")==(char *)vbuf)
     vbuf = vbuf + 5;
+  else
+  if(strstr((char *)vbuf,"gopher:")==(char *)vbuf)
+    vbuf = vbuf + 7;
+  else
+  if(strstr((char *)vbuf,"gophers:")==(char *)vbuf)
+  {
+    vbuf = vbuf + 8;
+    *doSSL = true;
+  }
   else
   if(strstr((char *)vbuf,"https:")==(char *)vbuf)
   {
@@ -46,16 +55,13 @@ bool parseWebUrl(uint8_t *vbuf, char **hostIp, char **req, int *port, bool *doSS
      *portB = 0;
      portB++;
      *port = atoi(portB);
-     if(port <= 0)
+     if(*port <= 0)
        return false;
   }
   return true;
 }
-/*
- * It just breaks too many things to allow a stream to go forward without
- * a determined length.  For example: firmware updates, and even at&g returns 
- * a page length for the client.  Let true clients use sockets and handle
- * their own chunked encoding.
+
+# ifdef INCLUDE_SD_SHELL
 class ChunkedStream : public WiFiClient
 {
 private:
@@ -63,146 +69,286 @@ private:
   int chunkCount = 0;
   int chunkSize = 0;
   uint8_t state = 0; //0
+  bool eof = false;
 
 public:
 
-    ChunkedStream(WiFiClient *s)
-    {
-      wifi = s;
-    }
+  ChunkedStream(WiFiClient *s)
+  {
+    wifi = s;
+  }
 
-    ~ChunkedStream()
-    {
-      if(wifi != null)
-      {
-        wifi->stop();
-        delete wifi;
-      }
-    }
-
-    virtual int read()
-    {
-      if(available()==0)
-        return -1;
-      char c=wifi->read();
-      bool gotC = false;
-      int errors = 0;
-      while((!gotC) && (errors < 5000))
-      {
-        switch(state)
-        {
-          case 0:
-            if(c=='0')
-              return '\0';
-            if((c>='0')&&(c<='9'))
-            {
-              chunkSize = (c - '0');
-              state=1;
-            }
-            else
-            if((c>='a')&&(c<='f'))
-            {
-              chunkSize = 10 + (c-'a');
-              state=1;
-            }
-            break;
-          case 1:
-          {
-            if((c>='0')&&(c<='9'))
-              chunkSize = (chunkSize * 16) + (c - '0');
-            else
-            if((c>='a')&&(c<='f'))
-              chunkSize = (chunkSize * 16) + (c-'a');
-            else
-            if(c=='\r')
-              state=2;
-            break;
-          }
-          case 2:
-            if(c == '\n')
-            {
-              state = 3;
-              chunkCount=0;
-            }
-            else
-              state = 0;
-            break;
-          case 3:
-            if(chunkCount < chunkSize)
-            {
-              gotC = true;
-              chunkCount++;
-            }
-            else
-            if(c == '\r')
-              state = 4;
-            else
-              state = 0;
-            break;
-          case 4:
-            if(c == '\n')
-              state = 0;
-            else
-              state = 0; // what else is there to do?!
-            break;
-        }
-        while((!gotC) && (errors < 5000))
-        {
-            if(available()>0)
-            {
-              c=wifi->read();
-              break;
-            }
-            else
-            if(++errors > 5000)
-              break;
-            else
-              delay(1);
-        }
-      }
-      return c;
-    }
-    virtual int peek()
-    {
-      return wifi->peek();
-    }
-
-    virtual int read(uint8_t *buf, size_t size)
-    {
-      if(size == 0)
-        return 0;
-      int num = available();
-      if(num > size)
-        num=size;
-      for(int i=0;i<num;i++)
-        buf[i]=read();
-      return num;
-    }
-
-    bool getNoDelay()
-    {
-      return wifi->getNoDelay();
-    }
-    void setNoDelay(bool nodelay)
-    {
-      wifi->setNoDelay(nodelay);
-    }
-
-    virtual int available()
-    {
-      return wifi->available();
-    }
-
-    virtual void stop()
+  ~ChunkedStream()
+  {
+    if(wifi != null)
     {
       wifi->stop();
+      delete wifi;
     }
-    virtual uint8_t connected()
+  }
+
+  virtual int read()
+  {
+    if(available()==0)
+      return -1;
+    int returnC = -1;
+    char c=wifi->read();
+    bool gotC = false;
+    int errors = 0;
+    while((!gotC) && (errors < 5000))
     {
-      return wifi->connected();
+      switch(state)
+      {
+        case 0:
+          if(c=='0')
+          {
+            eof=true;
+            return -1;
+          }
+          if((c>='0')&&(c<='9'))
+          {
+            chunkSize = (c - '0');
+            state=1;
+          }
+          else
+          if((c>='a')&&(c<='f'))
+          {
+            chunkSize = 10 + (c-'a');
+            state=1;
+          }
+          break;
+        case 1:
+        {
+          if((c>='0')&&(c<='9'))
+            chunkSize = (chunkSize * 16) + (c - '0');
+          else
+          if((c>='a')&&(c<='f'))
+            chunkSize = (chunkSize * 16) + (c-'a');
+          else
+          if(c=='\r')
+            state=2;
+          break;
+        }
+        case 2:
+          if(c == '\n')
+          {
+            state = 3;
+            errors = 0;
+            chunkCount=0;
+          }
+          else
+            state = 0;
+          break;
+        case 3:
+          if(chunkCount < chunkSize)
+          {
+            gotC = true;
+            chunkCount++;
+            returnC = c;
+          }
+          else
+          if(c == '\r')
+            state = 4;
+          else
+            state = 0;
+          break;
+        case 4:
+          if(c == '\n')
+            state = 0;
+          else
+            state = 0; // what else is there to do?!
+          break;
+      }
+      while((!gotC)
+      && (errors < 5000))
+      {
+        if(available()>0)
+        {
+          c=wifi->read();
+          break;
+        }
+        else
+        if(++errors > 5000)
+          break;
+        else
+          delay(1);
+      }
     }
+    return returnC;
+  }
+  virtual int peek()
+  {
+    return wifi->peek();
+  }
+
+  virtual int read(uint8_t *buf, size_t size)
+  {
+    if(size == 0)
+      return 0;
+    int num = available();
+    if(num > size)
+      num=size;
+    for(int i=0;i<num;i++)
+      buf[i]=read();
+    return num;
+  }
+
+  bool getNoDelay()
+  {
+    return wifi->getNoDelay();
+  }
+  void setNoDelay(bool nodelay)
+  {
+    wifi->setNoDelay(nodelay);
+  }
+
+  virtual int available()
+  {
+    return wifi->available();
+  }
+
+  virtual void stop()
+  {
+    wifi->stop();
+  }
+  virtual uint8_t connected()
+  {
+    return wifi->connected() || (!eof);
+  }
 };
- */
+
+class FileWiFiStream : public WiFiClient
+{
+private:
+  File f;
+  uint8_t state = 0; //0
+
+  void closeFile()
+  {
+    if(state == 0)
+    {
+      String name = "/";
+      name += f.name();
+      f.close();
+      SD.remove(name.c_str());
+      state=1;
+    }
+  }
+
+public:
+
+  FileWiFiStream(const char *file)
+  {
+    f = SD.open(file,FILE_READ);
+  }
+
+  ~FileWiFiStream()
+  {
+    closeFile();
+  }
+
+  virtual int read()
+  {
+    return f.read();
+  }
+
+  virtual int peek()
+  {
+    return f.peek();
+  }
+
+  virtual int read(uint8_t *buf, size_t size)
+  {
+    return f.read(buf,size);
+  }
+
+  bool getNoDelay()
+  {
+    return true;
+  }
+  void setNoDelay(bool nodelay)
+  {
+  }
+
+  virtual int available()
+  {
+    return f.available();
+  }
+
+  virtual void stop()
+  {
+    closeFile();
+  }
+  virtual uint8_t connected()
+  {
+    return (state == 0);
+  }
+};
+#endif
+
+WiFiClient *doGopherGetStream(const char *hostIp, int port, const char *req, bool doSSL, uint32_t *responseSize)
+{
+  *responseSize = 0;
+  if(WiFi.status() != WL_CONNECTED)
+    return null;
+
+  WiFiClient *c = createWiFiClient(doSSL);
+  if(port == 0)
+    port = 70;
+  if(!c->connect(hostIp, port))
+  {
+    c->stop();
+    delete c;
+    return null;
+  }
+  c->setNoDelay(DEFAULT_NO_DELAY);
+  const char *root = "";
+  if(req == NULL)
+    req=root;
+  c->printf("%s\r\n",req);
+  c->flush();
+  *responseSize = 0;
+# ifdef INCLUDE_SD_SHELL
+  if(SD.cardType() != CARD_NONE)
+  {
+    char tempWebName[20];
+    sprintf(tempWebName,"/.tmp_web_%u",random(9999));
+    if(SD.exists(tempWebName))
+      SD.remove(tempWebName);
+    File tempF = SD.open(tempWebName,FILE_WRITE);
+    if(!tempF)
+    {
+      *responseSize = 0;
+      return c;
+    }
+    size_t written = 0;
+    int b = c->read();
+    int errors = 0;
+    while((b < 0)&&(++errors<2000))
+    {
+      delay(1);
+      b = c->read();
+    }
+    while((b >= 0)&&(c->connected()||(c->available()>0)))
+    {
+      written++;
+      tempF.write(b);
+      b = c->read();
+      while((b < 0)&&(++errors<2000)&&(c->connected()||(c->available()>0)))
+      {
+        delay(1);
+        b = c->read();
+      }
+    }
+    delete c;
+    tempF.close();
+    *responseSize = written;
+    return new FileWiFiStream(tempWebName);
+  }
+# endif
+  return c;
+}
+
 WiFiClient *doWebGetStream(const char *hostIp, int port, const char *req, bool doSSL, uint32_t *responseSize)
 {
   *responseSize = 0;
@@ -315,6 +461,11 @@ WiFiClient *doWebGetStream(const char *hostIp, int port, const char *req, bool d
     }
   }
   
+# ifdef INCLUDE_SD_SHELL
+  if((chunked)
+  &&(SD.cardType() != CARD_NONE))
+    respLength = 1;
+#endif
   *responseSize = respLength;
   if(((!c->connected())&&(c->available()==0))
   ||(respCode != 200)
@@ -324,21 +475,58 @@ WiFiClient *doWebGetStream(const char *hostIp, int port, const char *req, bool d
     delete c;
     return null;
   }
+# ifdef INCLUDE_SD_SHELL
+  if((chunked)
+  &&(SD.cardType() != CARD_NONE))
+  {
+    ChunkedStream *ch = new ChunkedStream(c);
+    char tempWebName[20];
+    sprintf(tempWebName,"/.tmp_web_%u",random(9999));
+    if(SD.exists(tempWebName))
+      SD.remove(tempWebName);
+    File tempF = SD.open(tempWebName,FILE_WRITE);
+    if(!tempF)
+    {
+      delete ch;
+      *responseSize = 0;
+      return c;
+    }
+    size_t written = 0;
+    int b = ch->read();
+    int errors = 0;
+    while((b < 0)&&(++errors<2000))
+    {
+      delay(1);
+      b = ch->read();
+    }
+    while((b >= 0)&&(ch->connected()))
+    {
+      written++;
+      tempF.write(b);
+      b = ch->read();
+      while((b < 0)&&(++errors<2000)&&(ch->connected()))
+      {
+        delay(1);
+        b = ch->read();
+      }
+    }
+    delete ch;
+    tempF.close();
+    *responseSize = written;
+    return new FileWiFiStream(tempWebName);
+  }
+# endif
   //if(chunked) // technically, if a length was returned, chunked would be ok, but that's not in the cards.
   //  return new ChunkedStream(c);
   return c;
 }
 
-bool doWebGet(const char *hostIp, int port, FS *fs, const char *filename, const char *req, const bool doSSL)
+bool doStreamGet(WiFiClient *c, uint32_t respLength, FS *fs, const char *filename)
 {
-  uint32_t respLength=0;
-  WiFiClient *c = doWebGetStream(hostIp, port, req, doSSL, &respLength);
-  if(c==null)
-    return false;
   uint32_t bytesRead = 0;
   File f = fs->open(filename, "w");
   unsigned long now = millis();
-  while((bytesRead < respLength) // this can be removed for chunked encoding support 
+  while(((bytesRead < respLength) || (respLength==0))
   && (c->connected()||(c->available()>0)) 
   && ((millis()-now)<10000))
   {
@@ -360,13 +548,27 @@ bool doWebGet(const char *hostIp, int port, FS *fs, const char *filename, const 
   return (respLength == 0) || (bytesRead == respLength);
 }
 
-bool doWebGetBytes(const char *hostIp, int port, const char *req, const bool doSSL, uint8_t *buf, int *bufSize)
+bool doWebGet(const char *hostIp, int port, FS *fs, const char *filename, const char *req, const bool doSSL)
+{
+  uint32_t respLength = 0;
+  WiFiClient *c = doWebGetStream(hostIp, port, req, doSSL, &respLength);
+  if(c == NULL)
+    return false;
+  return doStreamGet(c,respLength,fs,filename);
+}
+
+bool doGopherGet(const char *hostIp, int port, FS *fs, const char *filename, const char *req, const bool doSSL)
+{
+  uint32_t respLength = 0;
+  WiFiClient *c = doGopherGetStream(hostIp, port, req, doSSL, &respLength);
+  if(c == NULL)
+    return false;
+  return doStreamGet(c,respLength,fs,filename);
+}
+
+bool doStreamGetBytes(WiFiClient *c, uint32_t respLength, uint8_t *buf, int *bufSize)
 {
   *bufSize = -1;
-  uint32_t respLength=0;
-  WiFiClient *c = doWebGetStream(hostIp, port, req, doSSL, &respLength);
-  if(c==null)
-    return false;
   if(((!c->connected())&&(c->available()==0))
   ||(respLength > *bufSize))
   {
@@ -395,4 +597,24 @@ bool doWebGetBytes(const char *hostIp, int port, const char *req, const bool doS
   c->stop();
   delete c;
   return (respLength == 0) || (index == respLength);
+}
+
+bool doWebGetBytes(const char *hostIp, int port, const char *req, const bool doSSL, uint8_t *buf, int *bufSize)
+{
+  *bufSize = -1;
+  uint32_t respLength=0;
+  WiFiClient *c = doWebGetStream(hostIp, port, req, doSSL, &respLength);
+  if(c==null)
+    return false;
+  return doStreamGetBytes(c,respLength,buf,bufSize);
+}
+
+bool doGopherGetBytes(const char *hostIp, int port, const char *req, const bool doSSL, uint8_t *buf, int *bufSize)
+{
+  *bufSize = -1;
+  uint32_t respLength=0;
+  WiFiClient *c = doGopherGetStream(hostIp, port, req, doSSL, &respLength);
+  if(c==null)
+    return false;
+  return doStreamGetBytes(c,respLength,buf,bufSize);
 }

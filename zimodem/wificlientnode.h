@@ -1,5 +1,5 @@
 /*
-   Copyright 2016-2019 Bo Zimmerman
+   Copyright 2016-2024 Bo Zimmerman
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -14,23 +14,38 @@
    limitations under the License.
 */
 
-#define LAST_PACKET_BUF_SIZE 256
-#define OVERFLOW_BUF_SIZE 256
-#define UNDERFLOW_BUF_MAX_SIZE 256
+#define PACKET_BUF_SIZE 256
 
 #ifdef ZIMODEM_ESP32
-#include <WiFiClientSecure.h>
+# include <WiFiClientSecure.h>
+#endif
+#ifdef INCLUDE_SSH
+# include "wifisshclient.h"
 #endif
 
 static WiFiClient *createWiFiClient(bool SSL)
 {
 #ifdef ZIMODEM_ESP32
   if(SSL)
-    return new WiFiClientSecure();
+  {
+    WiFiClientSecure *c = new WiFiClientSecure();
+    c->setInsecure();
+    return c;
+  }
   else
+#else
+  //WiFiClientSecure *c = new WiFiClientSecure();
+  //c->setInsecure();
 #endif
   return new WiFiClient();
 }
+
+typedef struct Packet
+{
+  uint8_t num = 0;
+  uint16_t len = 0;
+  uint8_t buf[PACKET_BUF_SIZE] = {0};
+};
 
 class WiFiClientNode : public Stream
 {
@@ -44,6 +59,9 @@ class WiFiClientNode : public Stream
     int ringsRemain=0;
     unsigned long nextRingMillis = 0;
     unsigned long nextDisconnect = 0;
+    void constructNode();
+    void constructNode(char *hostIp, int newport, int flagsBitmap, int ringDelay);
+    void constructNode(char *hostIp, int newport, char *username, char *password, int flagsBitmap, int ringDelay);
 
   public:
     int id=0;
@@ -58,15 +76,14 @@ class WiFiClientNode : public Stream
     char *machineState = NULL;
     String machineQue = "";
 
-    uint8_t lastPacketBuf[LAST_PACKET_BUF_SIZE];
-    int lastPacketLen=0;
-    //uint8_t overflowBuf[OVERFLOW_BUF_SIZE];
-    //int overflowBufLen = 0;
-    uint8_t underflowBuf[UNDERFLOW_BUF_MAX_SIZE];
-    size_t underflowBufLen = 0;
+    uint8_t nextPacketNum=1;
+    uint8_t blankPackets=0;
+    struct Packet lastPacket[3]; // 0 = current buf, 1&2 are back-cache bufs
+    //struct Packet underflowBuf; // underflows no longer handled this way
     WiFiClientNode *next = null;
 
     WiFiClientNode(char *hostIp, int newport, int flagsBitmap);
+    WiFiClientNode(char *hostIp, int newport, char *username, char *password, int flagsBitmap);
     WiFiClientNode(WiFiClient newClient, int flagsBitmap, int ringDelay);
     ~WiFiClientNode();
     bool isConnected();
@@ -90,15 +107,17 @@ class WiFiClientNode : public Stream
 
     size_t write(uint8_t c);
     size_t write(const uint8_t *buf, size_t size);
+    void print(String s);
     int read();
     int peek();
     void flush();
+    void flushAlways();
     int available();
     int read(uint8_t *buf, size_t size);
     String readLine(unsigned int timeout);
 
     static int getNumOpenWiFiConnections();
-    static int checkForAutoDisconnections();
+    static void checkForAutoDisconnections();
 };
 
 

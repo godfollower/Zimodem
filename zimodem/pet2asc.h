@@ -1,5 +1,5 @@
 /*
-   Copyright 2016-2019 Bo Zimmerman
+   Copyright 2016-2024 Bo Zimmerman
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -22,7 +22,14 @@
 # include "SD.h"
 # include "SPI.h"
 # include "driver/uart.h"
-  static HardwareSerial HWSerial(UART_NUM_2);
+# ifdef ARDUINO_ESP32S3_DEV
+#   define MAIN_UART_NUM UART_NUM_1
+# else
+#   define MAIN_UART_NUM UART_NUM_2
+# endif
+# define DEBUG_UART_NUM UART_NUM_0
+  static HardwareSerial HWSerial(MAIN_UART_NUM);
+  static HardwareSerial DBSerial(DEBUG_UART_NUM);
 #else
 # include "ESP8266WiFi.h"
 # define HWSerial Serial

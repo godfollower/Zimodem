@@ -1,5 +1,5 @@
 /*
-   Copyright 2016-2019 Bo Zimmerman
+   Copyright 2016-2024 Bo Zimmerman
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -25,14 +25,28 @@ PhoneBookEntry::PhoneBookEntry(unsigned long phnum, const char *addr, const char
   strcpy((char *)notes,note);
   
   if(phonebook == null)
-    phonebook = this;
-  else
   {
-    PhoneBookEntry *last = phonebook;
-    while(last->next != null)
-      last = last->next;
-    last->next = this;
+    phonebook = this;
+    return;
   }
+  PhoneBookEntry *last = phonebook;
+  if(last->number > number)
+  {
+    phonebook = this;
+    next = last;
+    return;
+  }
+  while(last->next != null)
+  {
+    if(last->next->number > number)
+    {
+      next = last->next;
+      last->next = this;
+      return;
+    }
+    last = last->next;
+  }
+  last->next = this;
 }
 
 PhoneBookEntry::~PhoneBookEntry()
@@ -91,9 +105,10 @@ bool PhoneBookEntry::checkPhonebookEntry(String cmd)
     bool error = false;
     for(char *cptr=(char *)vbuf;*cptr!=0;cptr++)
     {
-      if(strchr("0123456789",*cptr) < 0)
+      if(strchr("0123456789",*cptr) == 0)
       {
-        error =true;
+        error = true;
+        break;
       }
     }
     if(error || (strlen((char *)vbuf)>9))

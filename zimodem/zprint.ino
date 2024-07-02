@@ -1,5 +1,5 @@
 /*
-   Copyright 2020-2020 Bo Zimmerman
+   Copyright 2020-2024 Bo Zimmerman
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -80,9 +80,7 @@ size_t ZPrint::writeChunk(char *s, int len)
 void ZPrint::announcePrintJob(const char *hostIp, const int port, const char *req)
 {
   logPrintfln("Print Request to host=%s, port=%d",hostIp,port);
-  debugPrintf("Print Request to host=%s, port=%d\n",hostIp,port);
   logPrintfln("Print Request is /%s",req);
-  debugPrintf("Print Request is /%s\n",req);
 }
 
 ZResult ZPrint::switchToPostScript(char *prefix)
@@ -93,7 +91,6 @@ ZResult ZPrint::switchToPostScript(char *prefix)
     return ZERROR;
   char *workBuf = (char *)malloc(strlen(lastPrinterSpec) +1);
   strcpy(workBuf, lastPrinterSpec);
-  
   char *hostIp;
   char *req;
   int port;
@@ -133,8 +130,48 @@ ZResult ZPrint::switchToPostScript(char *prefix)
   return result;
 }
 
+bool ZPrint::testPrinterSpec(const char *vbuf, int vlen, bool petscii)
+{
+  char *workBuf = (char *)malloc(vlen+1);
+  strcpy(workBuf, vbuf);
+  if(petscii)
+  {
+    for(int i=0;i<vlen;i++)
+      workBuf[i] = petToAsc(workBuf[i]);
+  }
+  if((vlen <= 2)||(workBuf[1]!=':'))
+  {
+    free(workBuf);
+    return false;
+  }
+  
+  switch(workBuf[0])
+  {
+  case 'P': case 'p': 
+  case 'A': case 'a': 
+  case 'R': case 'r': 
+    //yay
+    break;
+  default:
+    free(workBuf);
+    return false;
+  }
+  char *hostIp;
+  char *req;
+  int port;
+  bool doSSL;
+  if(!parseWebUrl((uint8_t *)workBuf+2,&hostIp,&req,&port,&doSSL))
+  {
+    free(workBuf);
+    return false;
+  }
+  free(workBuf);
+  return true;
+}
+
 ZResult ZPrint::switchTo(char *vbuf, int vlen, bool petscii)
 {
+  debugPrintf("\r\nMode:Print\r\n");
   char *workBuf = (char *)malloc(vlen+1);
   strcpy(workBuf, vbuf);
   if(petscii)
@@ -188,7 +225,7 @@ ZResult ZPrint::switchTo(char *vbuf, int vlen, bool petscii)
   }
   if(newUrl)
     setLastPrinterSpec(vbuf);
-  
+
   wifiSock = new WiFiClientNode(hostIp,port,doSSL?FLAG_SECURE:0);
   wifiSock->setNoDelay(false); // we want a delay in this case
   outStream = wifiSock;
@@ -341,6 +378,7 @@ void ZPrint::serialIncoming()
 
 void ZPrint::switchBackToCommandMode(bool error)
 {
+  debugPrintf("\r\nMode:Command\r\n");
   if((wifiSock != null)||(outStream!=null))
   {
     if(error)
@@ -360,13 +398,13 @@ void ZPrint::loop()
   if(((wifiSock==null)&&(outStream==null))
   || ((wifiSock!=null)&&(!wifiSock->isConnected())))
   {
-    debugPrintf("No printer connection\n");
+    debugPrintf("No printer connection\r\n");
     switchBackToCommandMode(true);
   }
   else
   if(millis()>currentExpiresTimeMs)
   {
-    debugPrintf("Time-out in printing\n");
+    debugPrintf("Time-out in printing\r\n");
     if(pdex > 0)
       writeChunk(pbuf,pdex);
     writeStr("0\r\n\r\n");
@@ -374,5 +412,6 @@ void ZPrint::loop()
     switchBackToCommandMode(false);
   }
   checkBaudChange();
+  logFileLoop();
 }
 

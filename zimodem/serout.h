@@ -1,5 +1,5 @@
 /*
-   Copyright 2016-2019 Bo Zimmerman
+   Copyright 2016-2024 Bo Zimmerman
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -37,10 +37,10 @@ static bool enableRtsCts = true;
 #  define SER_BUFSIZE 128
 #endif
 static uint8_t TBUF[SER_WRITE_BUFSIZE];
-static char FBUF[256];
 static int TBUFhead=0;
 static int TBUFtail=0;
 static int serialDelayMs = 0;
+static char FBUF[256];
 
 static void serialDirectWrite(uint8_t c);
 static void serialOutDeque();
@@ -73,6 +73,7 @@ class ZSerial : public Stream
     void printc(const char c);
     void printc(uint8_t c);
     virtual size_t write(uint8_t c);
+    size_t write(uint8_t *buf, int bufSz);
     void printb(uint8_t c);
     void printd(double f);
     void printi(int i);

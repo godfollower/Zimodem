@@ -1,5 +1,5 @@
 /*
-   Copyright 2020-2020 Bo Zimmerman
+   Copyright 2020-2024 Bo Zimmerman
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -55,6 +55,7 @@ class ZPrint : public ZMode
     ZResult switchTo(char *vbuf, int vlen, bool petscii);
     ZResult switchToPostScript(char *prefix);
     void setLastPrinterSpec(const char *spec);
+    bool testPrinterSpec(const char *vbuf, int vlen, bool petscii);
     char *getLastPrinterSpec();
     void setTimeoutDelayMs(int ms);
     int getTimeoutDelayMs();

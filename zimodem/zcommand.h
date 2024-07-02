@@ -1,5 +1,5 @@
 /*
-   Copyright 2016-2019 Bo Zimmerman
+   Copyright 2016-2024 Bo Zimmerman
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -21,12 +21,16 @@ static const char *CONFIG_FILE     = "/zconfig_v2.txt";
 #define DEFAULT_TERMTYPE "Zimodem"
 #define DEFAULT_BUSYMSG "\r\nBUSY\r\n7\r\n"
 
+static void parseHostInfo(uint8_t *vbuf, char **hostIp, int *port, char **username, char **password);
+static bool validateHostInfo(uint8_t *vbuf);
+
 enum ZResult
 {
   ZOK,
   ZERROR,
   ZCONNECT,
   ZNOCARRIER,
+  ZNOANSWER,
   ZIGNORE,
   ZIGNORE_SPECIAL
 };
@@ -71,16 +75,35 @@ enum ConfigOptions
   CFG_STATIC_GW=35,
   CFG_STATIC_SN=36,
   CFG_BUSYMSG=37,
-  CFG_LAST=37
+  CFG_S62_TELNET=38,
+  CFG_S63_HANGUP=39,
+  CFG_ALTOPMODE=40,
+  CFG_LAST=40
+};
+
+const ConfigOptions v2HexCfgs[] = {
+  CFG_WIFISSI, CFG_WIFIPW, CFG_TIMEZONE, CFG_TIMEFMT, CFG_TIMEURL,
+  CFG_PRINTSPEC, CFG_BUSYMSG, CFG_HOSTNAME, CFG_TERMTYPE, (ConfigOptions)255
 };
 
 enum BinType
 {
-  BTYPE_NORMAL=0,
-  BTYPE_HEX=1,
-  BTYPE_DEC=2,
-  BTYPE_NORMAL_NOCHK=3,
-  BTYPE_INVALID=4
+  BTYPE_NORMAL      = 0,
+  BTYPE_HEX         = 1,
+  BTYPE_DEC         = 2,
+  BTYPE_NORMAL_NOCHK= 3,
+  BTYPE_NORMAL_PLUS = 4,
+  BTYPE_HEX_PLUS    = 5,
+  BTYPE_DEC_PLUS    = 6,
+  BTYPE_INVALID     = 7
+};
+
+enum OpModes
+{
+  OPMODE_NONE,
+  OPMODE_1650,
+  OPMODE_1660,
+  OPMODE_1670
 };
 
 class ZCommand : public ZMode
@@ -88,64 +111,85 @@ class ZCommand : public ZMode
   friend class WiFiClientNode;
   friend class ZConfig;
   friend class ZBrowser;
+#ifdef INCLUDE_IRCC
+  friend class ZIRCMode;
+#endif
+#ifdef INCLUDE_COMET64
+  friend class ZComet64Mode;
+#endif
 
   private:
-    char CRLF[4];
-    char LFCR[4];
-    char LF[2];
-    char CR[2];
-    char BS=8;
-    char ringCounter = 1;
+    char            CRLF[4];
+    char            LFCR[4];
+    char            LF[2];
+    char            CR[2];
+    char            BS                   = 8;
 
-    ZSerial serial;
-    bool packetXOn = true;
-    BinType binType = BTYPE_NORMAL;
-    uint8_t nbuf[MAX_COMMAND_SIZE];
-    char hbuf[MAX_COMMAND_SIZE];
-    int eon=0;
-    int lastServerClientId = 0;
-    WiFiClientNode *current = null;
-    bool autoStreamMode=false;
-    bool preserveListeners=false;
-    unsigned long lastNonPlusTimeMs = 0;
-    unsigned long currentExpiresTimeMs = 0;
-    char *tempDelimiters = NULL;
-    char *tempMaskOuts = NULL;
-    char *tempStateMachine = NULL;
-    char *delimiters = NULL;
-    char *maskOuts = NULL;
-    char *stateMachine = NULL;
-    char *machineState = NULL;
-    String machineQue = "";
-    String previousCommand = "";
-    WiFiClientNode *nextConn=null;
-    int lastPacketId = -1;
+    ZSerial         serial;
+
+    WiFiClientNode *current              = null;
+    WiFiClientNode *nextConn             = null;
+    bool            packetXOn            = true;
+    bool            busyMode             = false;
+    char            ringCounter          = 1;
+    BinType         binType              = BTYPE_NORMAL;
+    unsigned long   lastNonPlusTimeMs    = 0;
+    unsigned long   currentExpiresTimeMs = 0;
+    uint8_t         nbuf[MAX_COMMAND_SIZE];
+    char            hbuf[MAX_COMMAND_SIZE];
+    int             eon                  = 0;
+    int             lastServerClientId   = 0;
+    bool            autoStreamMode       = false;
+    bool            telnetSupport        = false;
+    bool            preserveListeners    = false;
+    char           *tempDelimiters       = NULL;
+    char           *delimiters           = NULL;
+    char           *tempMaskOuts         = NULL;
+    char           *maskOuts             = NULL;
+    char           *tempStateMachine     = NULL;
+    char           *stateMachine         = NULL;
+    char           *machineState         = NULL;
+    String          machineQue           = "";
+    String          previousCommand      = "";
+    int             lastPacketId         = -1;
+
+    unsigned long   lastPulseTimeMs      = 0;
+    int             lastPulseState       = DEFAULT_OTH_INACTIVE;
+    unsigned int    pulseWork            = 0;
+    String          pulseBuf             = "";
 
     byte CRC8(const byte *data, byte len);
 
     void showInitMessage();
     bool readSerialStream();
-    bool clearPlusProgress();
+    void clearPlusProgress();
     bool checkPlusEscape();
     String getNextSerialCommand();
     ZResult doSerialCommand();
     void setConfigDefaults();
     void parseConfigOptions(String configArguments[]);
     void setOptionsFromSavedConfig(String configArguments[]);
-    void reSaveConfig();
-    void reSendLastPacket(WiFiClientNode *conn);
-    void acceptNewConnection();
-    void headerOut(const int channel, const int sz, const int crc8);
+    bool reSaveConfig(int retries);
+    void setAltOpModeAdjustments();
+    int pinStatusDecoder(int pinActive, int pinInactive);
+    int getStatusRegister(const int snum, int crc8);
+    ZResult setStatusRegister(const int snum, const int sval, int *crc8, const ZResult oldRes);
+    void packetOut(uint8_t id, uint8_t *cbuf, uint16_t bufLen, uint8_t num);
+    void reSendLastPacket(WiFiClientNode *conn, uint8_t which);
+    bool acceptNewConnection();
+    void headerOut(const int channel, const int num, const int sz, const int crc8);
     void sendConnectionNotice(int nodeId);
     void sendNextPacket();
     void connectionArgs(WiFiClientNode *c);
-    uint8_t *doStateMachine(uint8_t *buf, int *bufLen, char **machineState, String *machineQue, char *stateMachine);
-    uint8_t *doMaskOuts(uint8_t *buf, int *bufLen, char *maskOuts);
+    void updateAutoAnswer();
+    void checkPulseDial();
+    uint8_t *doStateMachine(uint8_t *buf, uint16_t *bufLen, char **machineState, String *machineQue, char *stateMachine);
+    uint8_t *doMaskOuts(uint8_t *buf, uint16_t *bufLen, char *maskOuts);
     ZResult doWebDump(Stream *in, int len, const bool cacheFlag);
     ZResult doWebDump(const char *filename, const bool cache);
 
-    ZResult doResetCommand();
-    ZResult doNoListenCommand();
+    ZResult doResetCommand(bool resetOpMode);
+    ZResult doNoListenCommand(int vval, uint8_t *vbuf, int vlen, bool isNumber);
     ZResult doBaudCommand(int vval, uint8_t *vbuf, int vlen);
     ZResult doTransmitCommand(int vval, uint8_t *vbuf, int vlen, bool isNumber, const char *dmodifiers, int *crc8);
     ZResult doLastPacket(int vval, uint8_t *vbuf, int vlen, bool isNumber);
@@ -162,14 +206,14 @@ class ZCommand : public ZMode
     ZResult doTimeZoneSetupCommand(int vval, uint8_t *vbuf, int vlen, bool isNumber);
 
   public:
-    int packetSize = 127;
-    bool suppressResponses;
-    bool numericResponses;
-    bool longResponses;
-    boolean doEcho;
-    String EOLN;
-    char EC='+';
-    char ECS[32];
+    int     packetSize          = 127;
+    bool    suppressResponses;
+    bool    numericResponses;
+    bool    longResponses;
+    bool    doEcho;
+    String  EOLN;
+    char    EC                  = '+';
+    char    ECS[32];
 
     ZCommand();
     void loadConfig();
